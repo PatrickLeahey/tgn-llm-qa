@@ -9,7 +9,7 @@
 # MAGIC [Llama 2](https://huggingface.co/meta-llama) is a collection of pretrained and fine-tuned generative text models ranging in scale from 7 billion to 70 billion parameters. It is trained with 2T tokens and supports context length window upto 4K tokens. [Llama-2-7b-chat-hf](https://huggingface.co/meta-llama/Llama-2-7b-chat-hf) is the 7B fine-tuned model, optimized for dialogue use cases and converted for the Hugging Face Transformers format.
 # MAGIC
 # MAGIC Environment for this notebook:
-# MAGIC - Runtime: 13.2 GPU ML Runtime
+# MAGIC - Runtime: 13.3 GPU ML Runtime
 # MAGIC - Instance: `g5.4xlarge` on AWS
 # MAGIC
 # MAGIC GPU instances that have at least 16GB GPU memory would be enough for inference on single input (batch inference requires slightly more memory). On Azure, it is possible to use `Standard_NC6s_v3` or `Standard_NC4as_T4_v3`.
@@ -19,16 +19,10 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install --upgrade "mlflow-skinny[databricks]>=2.4.1"
-# MAGIC %pip install safetensors
-# MAGIC dbutils.library.restartPython()
-
-# COMMAND ----------
-
 from huggingface_hub import login
 
 # Login to Huggingface to get access to the model if you use the official version of Llama 2
-login(token=dbutils.secrets.get('solution-accelerator-cicd', 'huggingface'))
+login(token=dbutils.secrets.get('tgn-llm-qa', 'huggingface'))
 
 # COMMAND ----------
 
@@ -66,17 +60,16 @@ import transformers
 
 # Set mlflow experiment to the user's workspace folder - this enables this notebook to run as part of a job
 username = dbutils.notebook.entry_point.getDbutils().notebook().getContext().userName().get()
-mlflow.set_experiment('/Users/{}/hls-llm-doc-qa'.format(username))
+mlflow.set_experiment('/Users/{}/tgn-llm-qa'.format(username))
 
 # Define prompt template to get the expected features and performance for the chat versions. See our reference code in github for details: https://github.com/facebookresearch/llama/blob/main/llama/generation.py#L212
 
 DEFAULT_SYSTEM_PROMPT = """\
-You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.
+You are a helpful, respectful and honest friend that is also a fan of The Grey Nato podcast. Always answer as freindly and genuine as possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.
 
 If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information."""
 
 # Define PythonModel to log with mlflow.pyfunc.log_model
-
 class Llama2(mlflow.pyfunc.PythonModel):
     def load_context(self, context):
         """
@@ -160,7 +153,7 @@ signature = ModelSignature(inputs=input_schema, outputs=output_schema)
 
 # Define input example
 input_example=pd.DataFrame({
-            "prompt":["what is cystic fibrosis (CF)?"], 
+            "prompt":["what is james' favorite watch?"], 
             "temperature": [0.1],
             "max_new_tokens": [75]})
 
@@ -187,9 +180,20 @@ with mlflow.start_run() as run:
 # This may take about 6 minutes to complete
 result = mlflow.register_model(
     "runs:/"+run.info.run_id+"/model",
-    name="llama-2-7b-chat",
+    name="leahey_sandbox.tgn_llm_qa.tgn-llm-qa",
     await_registration_for=1000,
 )
+
+# COMMAND ----------
+
+result.
+
+# COMMAND ----------
+
+from mlflow.tracking.client import MlflowClient
+client = MlflowClient()
+
+client.set_registered_model_alias(result.name, "production", result.version)
 
 # COMMAND ----------
 
@@ -200,22 +204,19 @@ result = mlflow.register_model(
 
 # COMMAND ----------
 
-"""
 import mlflow
 import pandas as pd
 
-loaded_model = mlflow.pyfunc.load_model(f"models:/{registered_name}@Champion")
+loaded_model = mlflow.pyfunc.load_model("models:/leahey_sandbox.tgn_llm_qa.tgn-llm-qa@production")
 
 # Make a prediction using the loaded model
 loaded_model.predict(
     {
-        "prompt": ["What is ML?", "What is large language model?"],
-        "temperature": [0.1, 0.5],
-        "max_new_tokens": [100, 100],
+        "prompt": ["What is James' favorite watch"],
+        "temperature": [0.5],
+        "max_new_tokens": [100],
     }
 )
-
-"""
 
 # COMMAND ----------
 
@@ -231,25 +232,7 @@ loaded_model.predict(
 # COMMAND ----------
 
 #this should be the name of the registered model from the previous step
-model_name = 'llama-2-7b-chat'
-
-# Provide a name to the serving endpoint
-endpoint_name = 'llama-2-7b-chat'
-
-# COMMAND ----------
-
-import mlflow
-from mlflow.tracking.client import MlflowClient
-client = MlflowClient
-
-def get_latest_model_version(model_name: str):
-  client = MlflowClient()
-  models = client.get_latest_versions(model_name, stages=["None"])
-  for m in models:
-    new_model_version = m.version
-  return new_model_version
-
-model_version = get_latest_model_version(model_name)
+model_name = 'tgn-llm-qa'
 
 # COMMAND ----------
 
@@ -260,8 +243,8 @@ model_version = get_latest_model_version(model_name)
 served_models = [
     {
       "name": model_name,
-      "model_name": model_name,
-      "model_version": model_version,
+      "model_name": result.name,
+      "model_version": result.version,
       "workload_size": "Small",
       "workload_type": "GPU_MEDIUM",
       "scale_to_zero_enabled": False
@@ -271,36 +254,10 @@ traffic_config = {"routes": [{"served_model_name": model_name, "traffic_percenta
 
 # Create or update model serving endpoint
 
-if not endpoint_exists(endpoint_name):
-  create_endpoint(endpoint_name, served_models)
+if not endpoint_exists(model_name):
+  create_endpoint(model_name, served_models)
 else:
-  update_endpoint(endpoint_name, served_models)
-
-# COMMAND ----------
-
-# MAGIC %md 
-# MAGIC (Optional) Use the SDK instead of the API Above
-
-# COMMAND ----------
-
-# from databricks.sdk import WorkspaceClient
-# from databricks.sdk.service.serving import *
-# from datetime import timedelta
-# w = WorkspaceClient()
-# served_models = [ServedModelInput(model_name=model_name, 
-#                                   model_version=model_version, 
-#                                   workload_size='Small',
-#                                   workload_type='GPU_MEDIUM', # additional param for GPU serving 
-#                                   scale_to_zero_enabled='False')]
-
-# try:
-#   w.serving_endpoints.create_and_wait(name=endpoint_name, 
-#                                      config=EndpointCoreConfigInput(served_models=served_models), 
-#                                      timeout=timedelta(minutes=40)) # extending timeout for GPU serving; default is 20
-# except: # when the endpoint already exists, update it
-#   w.serving_endpoints.update_config_and_wait(name=endpoint_name, 
-#                                              served_models=served_models, 
-#                                              timeout=timedelta(minutes=40))
+  update_endpoint(model_name, served_models)
 
 # COMMAND ----------
 

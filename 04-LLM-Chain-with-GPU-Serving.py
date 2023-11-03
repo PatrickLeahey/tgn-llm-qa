@@ -1,8 +1,4 @@
 # Databricks notebook source
-# MAGIC %md This notebook is available at https://github.com/databricks-industry-solutions/hls-llm-doc-qa
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC ## Using an LLM Served on Databricks Model Serving: A LangChain app
 # MAGIC
@@ -34,15 +30,14 @@
 
 # COMMAND ----------
 
-# which LLM do you want to use? Grab the name of the model you deployed in step 04 from Databricks Model Serving
-dbutils.widgets.text('model_name_from_model_serving',"llama-2-7b-chat")
+# where you want the transcripts to be saved
+dbutils.widgets.text("model_endpoint", "https://e2-demo-field-eng.cloud.databricks.com/serving-endpoints/tgn-llm-qa/invocations")
 
-# which embeddings model from Hugging Face 🤗  you would like to use; for biomedical applications we have been using this model recently
-# also worth trying this model for embeddings for comparison: pritamdeka/BioBERT-mnli-snli-scinli-scitail-mednli-stsb
-dbutils.widgets.text("Embeddings_Model", "pritamdeka/S-PubMedBert-MS-MARCO")
+# which embeddings model from Hugging Face 🤗  you would like to use
+dbutils.widgets.text("embeddings_model", "sentence-transformers/multi-qa-distilbert-cos-v1")
 
-# where was the vectorstore persisted in the previous notebook?
-dbutils.widgets.text("Vectorstore_Persist_Path", "/dbfs/tmp/langchain_hls/db")
+# where you want the vectorstore to be persisted across sessions, so that you don't have to regenerate
+dbutils.widgets.text("vectorstore_path", "/dbfs/tmp/langchain_hls/db")
 
 # where you want the Hugging Face models to be temporarily saved
 hf_cache_path = "/dbfs/tmp/cache/hf"
@@ -50,9 +45,9 @@ hf_cache_path = "/dbfs/tmp/cache/hf"
 # COMMAND ----------
 
 #get widget values
-model_name=dbutils.widgets.get('model_name_from_model_serving')
-db_persist_path = dbutils.widgets.get("Vectorstore_Persist_Path")
-embeddings_model = dbutils.widgets.get("Embeddings_Model")
+model_endpoint = dbutils.widgets.get("model_endpoint")
+embeddings_model = dbutils.widgets.get("embeddings_model")
+vectorstore_path = dbutils.widgets.get("vectorstore_path")
 
 # COMMAND ----------
 
@@ -71,56 +66,18 @@ embeddings_model = dbutils.widgets.get("Embeddings_Model")
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.vectorstores import Chroma
 
-db_persist_path = db_persist_path
 hf_embed = HuggingFaceEmbeddings(model_name=embeddings_model)
-db = Chroma(collection_name="hls_docs", embedding_function=hf_embed, persist_directory=db_persist_path)
+db = Chroma(collection_name="tgn_docs", embedding_function=hf_embed, persist_directory=vectorstore_path)
 
 #k here is a particularly important parameter; this is how many chunks of text we want to retrieve from the vectorstore
-retriever = db.as_retriever(search_kwargs={"k": 3})
+retriever = db.as_retriever(search_kwargs={"k": 5})
 
 # COMMAND ----------
-
-# If running a Databricks notebook attached to an interactive cluster in "single user"
-# or "no isolation shared" mode, you only need to specify the endpoint name to create
-# a `Databricks` instance to query a serving endpoint in the same workspace.
-
-# Otherwise, you can manually specify the Databricks workspace hostname and personal access token
-# or set `DATABRICKS_HOST` and `DATABRICKS_TOKEN` environment variables, respectively.
-# You can set those environment variables based on the notebook context if run on Databricks
 
 import os
 from langchain.llms import Databricks
 
-os.environ['DATABRICKS_URL'] = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiUrl().getOrElse(None) 
-os.environ['DATABRICKS_TOKEN'] = dbutils.notebook.entry_point.getDbutils().notebook().getContext().apiToken().getOrElse(None)
-
-#llm = Databricks(endpoint_name=model_name)
-llm = Databricks(endpoint_name=model_name, model_kwargs={"temperature": 0.1,"max_new_tokens": 512})
-
-#if you want answers to generate faster, set the number of tokens above to a smaller number
-prompt = "What is cystic fibrosis?"
-#sample question, if you want to try it out
-displayHTML(llm(prompt))
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC If you were not able to deploy to GPU serving in the previous step but you were able to register the model with MLflow, you can load the model from the registry using the below code. This will require you to run this notebook on a GPU cluster.
-# MAGIC
-
-# COMMAND ----------
-
-
-'''
-import mlflow
-import pandas as pd
-loaded_model = mlflow.pyfunc.load_model(f"models:/llama2-7b-MedText-QLoRA/latest")
-
-# Make a prediction using the loaded model
-input_example=pd.DataFrame({"prompt":["what is ML?", "Name 10 colors."], "temperature": [0.5, 0.2],"max_tokens": [100, 200]})
-print(loaded_model.predict(input_example))
-
-'''
+llm = Databricks(endpoint_name=model_endpoint, model_kwargs={"temperature": 0.1,"max_new_tokens": 250})
 
 # COMMAND ----------
 
@@ -129,7 +86,7 @@ from langchain.chains.question_answering import load_qa_chain
 
 def build_qa_chain():
   
-  template = """You are a life sciences researcher with deep expertise in cystic fibrosis and related comorbidities. Below is an instruction that describes a task. Write a response that appropriately completes the request.
+  template = """You are my friend who has also listened to The Grey Nato podcast and we are talking about it. Below is an instruction that describes a task. Write a response that appropriately completes the request.
 
   ### Instruction:
   Use only information in the following paragraphs to answer the question. Explain the answer with reference to these paragraphs. If you don't know, say that you do not know.
@@ -187,17 +144,4 @@ def answer_question(question):
 
 # COMMAND ----------
 
-# MAGIC %md 
-# MAGIC Try asking a question about cystic fibrosis!
-
-# COMMAND ----------
-
-answer_question("What are the primary drugs for treating cystic fibrosis (CF)?")
-
-# COMMAND ----------
-
-answer_question("What are the cystic fibrosis drugs that target the CFTR protein?")
-
-# COMMAND ----------
-
-
+answer_question("What is James' favorite watch?")
